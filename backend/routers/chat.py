@@ -1,60 +1,44 @@
 # backend/routers/chat.py
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from models.schemas import ChatRequest, ChatResponse
-from services.query_generator import QueryGenerator
-from services.query_safety import QuerySafetyLayer
-from services.es_client import ESClient
-from services.context_manager import ContextManager
-from services.response_summariser import ResponseSummariser
+from services.query_generator import QueryGenerator, QueryGenerationError
 
 router = APIRouter()
 
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    """Handle chat requests and return responses."""
+    """
+    Milestone 2: Query Generation Pipeline
+    - Translate a plain-English question into an Elasticsearch query dict.
+    - Return the generated query in query_metadata.es_query.
+    - No safety layer yet, and NO execution against Elasticsearch.
+    """
+    query_generator = QueryGenerator()
     try:
-        # Generate Elasticsearch query from user message
-        query_generator = QueryGenerator()
-        es_query = query_generator.generate(request.message, request.history)
-        
-        # Validate and sanitize the query
-        safety_layer = QuerySafetyLayer()
-        validation_result = safety_layer.validate(es_query)
-        
-        if validation_result.status == "blocked":
-            return ChatResponse(
-                response="I'm sorry, I can't perform that operation.",
-                query_metadata={
-                    "es_query": None,
-                    "safety_status": "blocked",
-                    "blocked_reason": validation_result.reason
-                },
-                session_id=request.session_id
-            )
-        
-        # Execute the query
-        es_client = ESClient()
-        es_response = es_client.search(validation_result.query)
-        
-        # Shape the results
-        context_manager = ContextManager()
-        shaped_results = context_manager.shape_results(es_response, "aggregation")
-        
-        # Summarize the results
-        summariser = ResponseSummariser()
-        summary = summariser.summarize(shaped_results)
-        
+        es_query = query_generator.generate(request.message, [h.model_dump() for h in request.history])
+    except QueryGenerationError as e:
         return ChatResponse(
-            response=summary,
+            response=f"I couldn't generate an Elasticsearch query for that request. Reason: {str(e)}",
             query_metadata={
-                "es_query": validation_result.query,
-                "total_hits": es_response.get("hits", {}).get("total", {}).get("value", 0),
-                "execution_time_ms": es_response.get("took", 0),
-                "safety_status": validation_result.status,
-                "blocked_reason": validation_result.reason
+                "es_query": None,
+                "total_hits": None,
+                "execution_time_ms": None,
+                "safety_status": "blocked",
+                "blocked_reason": "query_generation_error",
             },
-            session_id=request.session_id
+            session_id=request.session_id,
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+    return ChatResponse(
+        response="Generated an Elasticsearch query for your request.",
+        query_metadata={
+            "es_query": es_query,
+            "total_hits": None,
+            "execution_time_ms": None,
+            "safety_status": "allowed",
+            "blocked_reason": None,
+        },
+        session_id=request.session_id,
+    )
