@@ -1,8 +1,11 @@
 # backend/services/query_generator.py
 
+from http import client
 import json
 import re
 from datetime import datetime
+
+from chromadb import HttpClient
 from services.langchain_tools import lookup_region
 from typing import Any, Dict, List, Optional
 from langchain.agents import AgentExecutor, create_react_agent
@@ -27,10 +30,15 @@ class QueryGenerator:
 
         # Vectorstore setup
         self.embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+        client = HttpClient(
+            host=settings.chroma_host,
+            port=settings.chroma_port
+        )
+
         self.vectorstore = Chroma(
+            client=client,
             collection_name="gkg_mapping",
-            embedding_function=self.embeddings,
-            persist_directory="./chroma_db",
+            embedding_function=self.embeddings
         )
 
         # Tools setup

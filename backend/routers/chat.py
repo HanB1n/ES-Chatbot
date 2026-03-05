@@ -8,10 +8,12 @@ from services.query_safety import QuerySafetyLayer, SafetyStatus
 from services.es_client import ESClient
 from services.context_manager import ContextManager
 from services.response_summariser import ResponseSummariser
+from services.vector_store import store_docs
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 es = ESClient()
+store_docs(es)  # Store ES mapping in vector store on startup for semantic retrieval in query generation
 query_gen = QueryGenerator()
 query_safety = QuerySafetyLayer()
 context_mgr = ContextManager(max_docs=query_safety.max_result_docs)
