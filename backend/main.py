@@ -1,13 +1,15 @@
 import logging
 
-from fastapi.middleware.cors import CORSMiddleware
-from elasticsearch import Elasticsearch
 import requests
+from elasticsearch import Elasticsearch
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
 from config import settings
 from routers import chat, index
 from services.logging_config import setup_logging
+from services.schema_store import schema_store
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -29,6 +31,19 @@ app.include_router(chat.router, prefix="/api/v1")
 app.include_router(index.router, prefix="/api/v1")
 
 
+@app.on_event("startup")
+async def startup_event() -> None:
+    """Warm up the Chroma schema collection from the live ES mapping.
+
+    The application does not crash if this fails; query generation will still try
+    to lazily sync the schema later.
+    """
+    try:
+        await schema_store.ensure_schema_collection_synced(force=False)
+    except Exception:
+        logger.exception("startup_schema_sync_failed")
+
+
 # -------------------------
 # Health Check Helpers
 # -------------------------
@@ -48,10 +63,7 @@ def _check_elasticsearch() -> bool:
 
 def _check_llm() -> bool:
     try:
-        r = requests.get(
-            f"{settings.llm_base_url}/models",
-            timeout=5,
-        )
+        r = requests.get(f"{settings.llm_base_url}/models", timeout=5)
         return r.status_code == 200
     except Exception:
         return False
@@ -68,10 +80,6 @@ def _check_chromadb() -> bool:
         return False
 
 
-# -------------------------
-# Health Endpoint
-# -------------------------
-
 @app.get("/health")
 def health_check():
     es_ok = _check_elasticsearch()
@@ -86,23 +94,18 @@ def health_check():
         "chromadb": chroma_ok,
     }
 
-# -------------------------
-# Error Handling
-# -------------------------
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    # This will catch any unhandled exceptions in the application and log them with structured logging
-    # This should be the last resort for error handling, as specific exceptions should ideally be caught and handled in their respective routes or services for better granularity and user feedback.
     session_id = getattr(request.state, "session_id", None)
     logger.exception(
-        "Unhandled exception: %s",
+        "Unhandled exception",
         extra={
             "session_id": session_id,
-            "error_type": "undhandled_exception",
+            "error_type": "unhandled_exception",
             "error_detail": repr(exc),
             "phase": "global_handling",
-        }
+        },
     )
     return JSONResponse(
         status_code=500,
