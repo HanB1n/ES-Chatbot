@@ -89,9 +89,10 @@ class ESClient:
             "top_sources": top_sources,
         }
     
-    async def get_mapping(self) -> dict:
+    async def get_mapping(self) -> list[Document]:
         mapping = await self.client.indices.get_mapping(index=settings.es_index)
-        properties = mapping[settings.es_index]["mappings"]["properties"]
+        actual_index_name = list(mapping.keys())[0]
+        properties = mapping[actual_index_name]["mappings"]["properties"]
 
         docs = []
         for field, info in properties.items():

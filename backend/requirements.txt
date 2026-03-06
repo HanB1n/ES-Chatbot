@@ -1,29 +1,13 @@
-# --- API ---
-fastapi==0.110.0
-uvicorn[standard]==0.29.0
-
-# --- Elasticsearch ---
-elasticsearch==8.13.0
-
-# --- Config ---
-pydantic==2.6.4
-pydantic-settings==2.2.1
-python-dotenv==1.0.1
-
-# --- LangChain Core ---
-langchain==0.1.16
-
-# --- LangChain Integrations ---
-langchain-openai==0.1.6
-langchain-chroma==0.1.1
-langchain-huggingface==0.0.3
-
-# --- Vector Database ---
-chromadb==0.4.24
-
-# --- Embeddings ---
-sentence-transformers==2.6.1
-torch>=2.2.0
-
-# --- Token counting (used by langchain) ---
-tiktoken==0.6.0
+uvicorn
+fastapi
+chromadb
+langchain
+langchain-core
+langchain-chroma
+langchain-huggingface
+langchain-openai
+openai
+elasticsearch>=8.0.0, <9.0.0
+pydantic_settings
+aiohttp
+sentence-transformers

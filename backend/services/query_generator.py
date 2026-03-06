@@ -1,25 +1,22 @@
 # backend/services/query_generator.py
 
-from http import client
 import json
 import re
 from datetime import datetime
 
-from chromadb import HttpClient
+from services.chroma_client import ChromaClient
 from services.langchain_tools import lookup_region
 from typing import Any, Dict, List, Optional
-from langchain.agents import AgentExecutor, create_react_agent
-from langchain.prompts import PromptTemplate
+from langchain.agents import create_agent
+from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
-from langchain_chroma import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
 from config import settings
 
 class QueryGenerationError(Exception):
     pass
 
 class QueryGenerator:
-    def __init__(self) -> None:
+    def __init__(self, chroma_client: ChromaClient) -> None:
         # LLM setup
         self.llm = ChatOpenAI(
             openai_api_base=settings.llm_base_url,
@@ -27,94 +24,36 @@ class QueryGenerator:
             model_name=settings.llm_model_name,
             temperature=0,
         )
-
-        # Vectorstore setup
-        self.embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-        client = HttpClient(
-            host=settings.chroma_host,
-            port=settings.chroma_port
-        )
-
-        self.vectorstore = Chroma(
-            client=client,
-            collection_name="gkg_mapping",
-            embedding_function=self.embeddings
-        )
-
+        self.chroma_client = chroma_client
         # Tools setup
         self.tools = [lookup_region]
         
 
         # Prompt setup
-        self.prompt = PromptTemplate.from_template(
-            """
-            You are an OSINT assistant that converts user questions into valid Elasticsearch JSON queries for gdelt data.
+        self.prompt ="""
+You are an OSINT assistant that converts user questions into valid Elasticsearch JSON queries for gdelt data.
+    - Use the provided schema context to understand field names and types.
+    - Only use the provided tool for region name to code lookups. Do not attempt to hardcode any region codes.
 
-            You have access to the following tools:
-
-            {tools}
-
-            Use the following format:
-
-            Question: the user question
-            Thought: think about what the user is asking
-            Action: the tool to use, must be one of [{tool_names}]
-            Action Input: the input to the tool
-            Observation: the result of the tool
-            ... (this Thought/Action/Observation can repeat up to 3 times)
-            Thought: I now know the final answer
-            Final Answer: return ONLY valid Elasticsearch JSON
-
-            ### APPENDIX A FIELD REFERENCE:
-            - Time: 'V21Date'
-            - Persons: 'V2Persons.V1Person' (.keyword for aggregations)
-            - Organisations: 'V2Orgs.V1Org' (.keyword for aggregations)
-            - Locations: 'V2Locations.FullName' (.keyword for aggregations)
-            - Country Code: 'V2Locations.CountryCode.keyword'
-            - Themes: 'V2EnhancedThemes.V2Theme' (.keyword for aggregations)
-            - Tone: 'V15Tone.Tone'
-            - Sources: 'V2SrcCmnName.V2SrcCmnName'
-            - Title: 'V2ExtrasXML.Title'
-            - URL: 'V2DocId'
-            - Quotes: 'V21Quotations.Quote'
-            
-            Rules:
-            - Never explain your reasoning in the Final Answer.
-            - Never return markdown.
-            - Return ONLY raw JSON.
-            - Use V21Date for date filtering.
-            - Use .keyword fields for aggregations.
-            - For "Top N", use terms aggregation.
-            - For aggregations, set "size": 0.
-            - Target index is always "gkg".
-            - If geographic expansion is required (e.g., "Asia"), use lookup_region tool.
-            - Always produce safe, read-only Elasticsearch queries.
-
-            Current Question:
-            {input}
-
-            {agent_scratchpad}
-            """
-        )
+### RULES:
+1. Always use 'V21Date' for date filtering.
+2. For "Top 10" use terms aggregation with '.keyword'.
+3. Set "size": 0 for aggregations.
+4. Target index is always 'gkg'.
+5. Return ONLY valid JSON. No explanations.
+"""
 
         # Agent setup
-        self.agent = create_react_agent(
-            llm = self.llm,
-            tools = self.tools,
-            prompt = self.prompt
-        )
-
-        self.executor = AgentExecutor(
-            agent=self.agent,
+        self.agent = create_agent(
+            model=self.llm,
             tools=self.tools,
-            verbose=False,
-            max_iterations=3,
-            handle_parsing_errors=True,
+            system_prompt=self.prompt
         )
 
     def _parse_json(self, text: str) -> Dict[str, Any]:
         if not text:
             raise QueryGenerationError("Empty LLM output.")
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
         cleaned = text.strip().replace("```json", "").replace("```", "").strip()
         try:
             return json.loads(cleaned)
@@ -127,9 +66,20 @@ class QueryGenerator:
                     raise QueryGenerationError(f"Invalid JSON: {e}")
             raise QueryGenerationError("LLM did not return valid JSON.")
 
-    async def generate(self, question: str, history: Optional[List[Dict]] = None) -> Dict[str, Any]:
-        docs = self.vectorstore.similarity_search(question, k=6)
+    def generate(self, question: str, history: Optional[List[Dict]] = None) -> Dict[str, Any]:
+        docs = self.chroma_client.similarity_search(question, k=6)
         schema_context = "\n".join(d.page_content for d in docs)
+        messages = []
+        if history:
+            for item in history:
+                if isinstance(item, dict):
+                    role = item.get("role") or "user"
+                    content = item.get("content") or ""
+                else:
+                    # It's a Pydantic object (HistoryItem)
+                    role = getattr(item, "role", "user") or "user"
+                    content = getattr(item, "content", "") or ""
+                messages.append({"role": role, "content": content})
 
         enriched_question = f"""
             Current datetime: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
@@ -140,14 +90,16 @@ class QueryGenerator:
             User question:
             {question}
             """
-
-        response = await self.executor.ainvoke(
-            input={"input": enriched_question}
+        messages.append({"role": "user", "content": enriched_question})
+        response = self.agent.invoke({
+            "messages": messages
+        }
         )
+            
         print(response)
-        output = response.get("output")
+        final_message_content = response["messages"][-1].content
         
-        if not output:
-            raise QueryGenerationError("No output from agent.")
+        if not final_message_content:
+            raise QueryGenerationError("No query generated by agent.")
         
-        return self._parse_json(output)
+        return self._parse_json(final_message_content)
