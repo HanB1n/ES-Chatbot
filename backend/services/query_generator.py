@@ -44,20 +44,21 @@ class QueryGenerator:
         observation_text: str,
     ) -> str:
         return f"""
-You are an OSINT assistant that converts a user question into a valid Elasticsearch JSON query body.
+You are an OSINT assistant that converts a user question into a valid Elasticsearch JSON query.
 
 Current date and time: {current_time}
 Target index: {settings.es_index}
 
 Rules:
-1. Return ONLY a JSON object. No prose, no markdown, no code fences.
-2. Use only fields that appear in the schema context.
+1. Return ONLY valid JSON object. No prose, no markdown, no code fences, no metadata.
+2. Use only fields that appear in the schema context, for all dates, use V21Date.
 3. Do not invent field names.
-4. For "top N", "most common", or ranking questions, use a terms aggregation and set top-level "size": 0.
+4. For "top N", "most common", or ranking questions, use a terms aggregation and set top-level "size": 0, if the final result does not give the top N, rerun increasing the N.
 5. Prefer keyword fields or keyword subfields for exact filters, sorting, and terms aggregations.
 6. If a previous attempt found no useful results, broaden the query by simplifying restrictive clauses or widening the time range.
-7. Keep the query safe and read-only. Never use scripts.
-8. Use concise, production-sensible Elasticsearch queries.
+7. If no specific time range is provided, by default use a 1 year timeframe.
+8. Keep the query safe and read-only. Never use scripts.
+9. Use concise, production-sensible Elasticsearch queries.
 
 Conversation history:
 {history_text}
@@ -81,12 +82,28 @@ Relevant live schema context retrieved from Chroma:
             content = item.get("content", "")
             lines.append(f"{role.upper()}: {content}")
         return "\n".join(lines)
+    
+    def _extract_query_block(self, text: str) -> str | None:
+        # Prefer ```json ... ```
+        match = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL | re.IGNORECASE)
+        if match:
+            return match.group(1)
+
+        # Otherwise accept any ``` ... ```
+        match = re.search(r"```\s*(.*?)\s*```", text, re.DOTALL)
+        if match:
+            return match.group(1)
+
+        return None
 
     def _parse_json(self, text: str) -> Dict[str, Any]:
         if not text:
             raise QueryGenerationError("Empty LLM output.")
 
-        cleaned = text.strip().replace("```json", "").replace("```", "").strip()
+        text = text.strip()
+        print(text)
+        block = self._extract_query_block(text)
+        cleaned = block if block else text
         try:
             parsed = json.loads(cleaned)
             if not isinstance(parsed, dict):
@@ -126,7 +143,6 @@ Relevant live schema context retrieved from Chroma:
             # Safe fallback: query generation can still proceed using the current question,
             # history, and previous attempt observations.
             schema_context = "(schema retrieval unavailable)"
-        
         messages = [
             {
                 "role": "system",

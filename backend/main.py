@@ -74,13 +74,7 @@ def _check_chromadb() -> bool:
             return True
     except Exception:
         pass
-
-    try:
-        r = requests.get(f"{base}/api/v1/heartbeat", timeout=5)
-        return r.status_code == 200
-    except Exception:
-        return False
-
+    return False
 
 @app.get("/health")
 def health_check():
