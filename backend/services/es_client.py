@@ -22,6 +22,10 @@ class ESClient:
             basic_auth=(settings.es_username, settings.es_password),
             verify_certs=settings.es_verify_ssl,
         )
+        
+    async def ping(self) -> bool:
+        """Ping the cluster to check health using the existing connection pool."""
+        return await self.client.ping()
 
     @staticmethod
     def _to_dict(response: Any) -> Dict[str, Any]:
@@ -91,3 +95,6 @@ class ESClient:
             "latest_date": latest,
             "top_sources": top_sources,
         }
+    
+# Create a single global instance
+es_client = ESClient()

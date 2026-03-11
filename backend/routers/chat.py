@@ -9,7 +9,7 @@ from fastapi import APIRouter
 from config import settings
 from models.schemas import ChatRequest, ChatResponse, QueryMetadata
 from services.context_manager import ContextManager
-from services.es_client import ESClient
+from services.es_client import es_client
 from services.query_generator import QueryGenerationError, QueryGenerator
 from services.query_safety import QuerySafetyLayer, SafetyStatus
 from services.response_summariser import ResponseSummariser
@@ -18,7 +18,6 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 query_gen = QueryGenerator()
 query_safety = QuerySafetyLayer()
-es = ESClient()
 context_mgr = ContextManager(max_docs=query_safety.max_result_docs)
 summariser = ResponseSummariser()
 
@@ -140,7 +139,7 @@ async def chat(request: ChatRequest):
         query_type = _infer_query_type(safe_query)
 
         try:
-            es_resp = await es.search(index=settings.es_index, query=safe_query)
+            es_resp = await es_client.search(index=settings.es_index, query=safe_query)
         except Exception as exc:
             logger.exception(
                 "elasticsearch_execution_failed",

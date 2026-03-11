@@ -11,7 +11,7 @@ import chromadb
 from langchain_huggingface import HuggingFaceEmbeddings
 
 from config import settings
-from services.es_client import ESClient
+from services.es_client import es_client
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ class SchemaStore:
     """
 
     def __init__(self) -> None:
-        self.es = ESClient()
+        self.es = es_client
         self.embeddings = HuggingFaceEmbeddings(model_name=settings.schema_embedding_model)
         self.client: Optional[chromadb.HttpClient] = None
         self.collection = None
@@ -61,12 +61,6 @@ class SchemaStore:
                     "Unable to access the Chroma collection. "
                     "The server may be running an older API version without required v2 routes."
                 ) from exc
-
-            if self.collection is None:
-                self.collection = self.client.get_or_create_collection(
-                    name=settings.chroma_collection,
-                    metadata={"source": "elasticsearch_schema", "index": settings.es_index},
-                )
 
     async def ensure_schema_collection_synced(self, force: bool = False) -> None:
         """Populate the Chroma collection from the current ES mapping if needed."""

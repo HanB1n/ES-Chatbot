@@ -1,7 +1,6 @@
 import logging
 
 import requests
-from elasticsearch import Elasticsearch
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -10,6 +9,7 @@ from config import settings
 from routers import chat, index
 from services.logging_config import setup_logging
 from services.schema_store import get_schema_store
+from services.es_client import es_client
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -39,20 +39,6 @@ async def startup_event() -> None:
     except Exception:
         logger.exception("startup_schema_sync_failed")
 
-
-def _check_elasticsearch() -> bool:
-    try:
-        es = Elasticsearch(
-            settings.es_host,
-            basic_auth=(settings.es_username, settings.es_password),
-            verify_certs=settings.es_verify_ssl,
-            request_timeout=5,
-        )
-        return bool(es.ping())
-    except Exception:
-        return False
-
-
 def _check_llm() -> bool:
     try:
         r = requests.get(f"{settings.llm_base_url}/models", timeout=5)
@@ -77,8 +63,8 @@ def _check_chromadb() -> bool:
     return False
 
 @app.get("/health")
-def health_check():
-    es_ok = _check_elasticsearch()
+async def health_check():
+    es_ok = await es_client.ping()
     llm_ok = _check_llm()
     chroma_ok = _check_chromadb()
 
